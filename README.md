@@ -13,18 +13,31 @@ Most of the functions included here rely on the fantastic Scikit-Image library, 
 This class is something I thought of doing after reading some object-oriented programming articles. Essentially, this is allowing me to treat all ion images with the same set of methods and attributes, which should hopefully make storing and analysing lots and lots of ion images easier. The attributes of IonImage are:
 
 Background (boolean) - for telling if it's a background image or not (maybe for some functionality later, but now it's just a boolean)
+
 ImageCentre (tuple) - Two values for storing the x and y centres of an image
+
 Reference (string) - Logbook reference for this image
+
 PumpWavelength (float)
+
 ProbeWavelength (float) - Pretty self-explanatory
+
 DetectionThreshold (float) - Used to store the sigma value used for Canny edge detection (i.e. the blur value), not quite a threshold
+
 ColourMap (string) - Makes imgshow with matplotlib more colourful
+
 Comments (list) - Self-explanatory. Uses the methods AddComment and ClearComments to add and wipe the comments data
+
 BlurSize (float) - Keeps track of the Gaussian kernel size for blurring in the method BlurImage
+
 Image (np.ndarray) - Numpy array that holds the intensity values
+
 BlurredImage (np.ndarray) - Numpy array that holds the blurred image
+
 Contrasted (np.ndarray) - Numpy array that holds the histogram equalised contrast image
+
 DetectedEdges (np.ndarray) - Numpy __boolean__ array that marks where edges are discovered by the method EdgeDetection
+
 
 ## File I/O
 
