@@ -1,5 +1,3 @@
-#!/bin/python
-
 # Routines for general ion image analysis using the IPython Notebooks
 
 # Notable entries:
@@ -10,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import os
+import shelve
 import csv
 from scipy import optimize
 import skimage.filters as filt
@@ -79,10 +78,6 @@ class BlankTest:
     name = " "
     def __init__(self, FileName):
         self.name = FileName
-        
-###############################################################################################
-###############################################################################################
-###############################################################################################
 
 ############### Formatting and file I/O routines #################
 # Function for reading a text image from file and converting to numpy array
@@ -124,5 +119,20 @@ def MassImportImages(Extension):
         LoadedImages[FileName] = IonImage(FileName, LoadImage(File))     # dynamically generate instances
     return LoadedImages
 
+# Function for exporting mass imported data as a dictionary that
+# can be read in and written out. Keep in mind for inter-notebook
+# "syncing"
+def ShelveData(Shelf, Dictionary):
+    ShelfReference = shelve.open(Shelf)
+    ShelfReference.update(Dictionary)
+    ShelfReference.close()
+
+# Opens the disk data for I/O. Remember to close() it!
+def CallShelfData(Shelf):
+    ShelfReference = shelve.open(Shelf)
+    return ShelfReference
+
+# Save an image (reference as attribute of IonImage) by calling
+# numpy save
 def ExportImage(FileName, Image):
     np.savetxt(FileName, Image, delimiter="\t")
