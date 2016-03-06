@@ -6,10 +6,8 @@
 # A class IonImage that defines a set of attributes for ion images,
 # plus some easily accessible functions within this class
 
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import notebook as nb
 import glob
 import os
 import csv
@@ -19,7 +17,6 @@ import skimage.feature as feat
 import skimage.measure as measure
 import skimage.draw as draw
 import skimage.exposure as exposure
-from scipy import optimize
 from skimage.transform import hough_circle
 
 ############### Classes #################
