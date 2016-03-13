@@ -18,6 +18,7 @@ import skimage.measure as measure
 import skimage.draw as draw
 import skimage.exposure as exposure
 from skimage.transform import hough_circle
+import abel
 
 ############### Classes #################
 
@@ -55,24 +56,16 @@ class IonImage:
         DisplayImage(self.BlurredImage, ColourMap = self.ColourMap)
         
     def EqualiseContrast(self):            # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
+        """Enhances the contrast of the image by normalising the intensity histogram
+        using example from scikit-image @ 
+        http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
+
+        Sets attribute Contrasted as the normalised image. Displays the image as well.
+        """
         p2, p98 = np.percentile(self.Image, (2, 98))
         self.Contrasted = exposure.rescale_intensity(self.Image, in_range=(p2, p98))
         DisplayImage(self.Contrasted, ColourMap = self.ColourMap)
-        
-    ###############################################################################################
-    #################### Centre finding and edge detection
-    def EdgeDetection(self, Sigma):
-        self.DetectionThreshold = Sigma
-        self.DetectedEdges = feat.canny(self.Image, Sigma)               # Use Canny edge detection
-        DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
-    def FindCentre(self):
-        if (self.DetectionThreshold == 0.):
-            print " You have to call EdgeDetection first!"
-            pass
-        else:
-            Bubble = measure.regionprops(self.DetectedEdges)[0]
-            self.ImageCentre = Bubble.centroid
-            print self.ImageCentre
+
     def SymmetriseCrop(self, x0=None, y0=None, CropSize=601):
         """
         Function that will symmetrise an image using the four quadrants and
@@ -83,6 +76,13 @@ class IonImage:
         y0 - centre value in y (int)
         CropSize - Size of image after cropping (int)
 
+        Returns:
+        Sets a few attributes to the Image instance,
+        SymmetrisedImage - The image with four symmetrised quadrants in
+                           the shape of the original input image (ndarray)
+        SymmetrisedQuadrant - A symmetrised quadrant (ndarray)
+        CBS - Stands for "Cropped, Blurred and Symmetrised". Returns
+              the four symmetrised quadrants in the shape of CropSize (ndarray)
 
         """
         OriginalImageSize = len(self.Image)
@@ -132,6 +132,41 @@ class IonImage:
             i = i + 1       # increment the row counter by one
         self.CBS = CroppedImage
         DisplayImage(CroppedImage, ColourMap=self.ColourMap)
+
+        
+    ###############################################################################################
+    #################### Centre finding and edge detection
+    def EdgeDetection(self, Sigma):
+        self.DetectionThreshold = Sigma
+        self.DetectedEdges = feat.canny(self.Image, Sigma)               # Use Canny edge detection
+        DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
+    def FindCentre(self):
+        if (self.DetectionThreshold == 0.):
+            print " You have to call EdgeDetection first!"
+            pass
+        else:
+            Bubble = measure.regionprops(self.DetectedEdges)[0]
+            self.ImageCentre = Bubble.centroid
+            print self.ImageCentre
+
+    def BASEX(self):
+        """ Calculates the inverse Abel transform of the symmetrised
+        and cropped image by calling routines in the abel module
+
+        Returns:
+        ReconstructedImage - 2D slice of the 3D reconstructed ion image (ndarray)
+        PES - Tuple containing the speed distribution vs. pixel radius
+
+        """
+        try:
+            self.ReconstructedImage = abel.transform(self.CBS,
+                                                direction="inverse",
+                                                method="basex")["transform"]
+            self.PES = abel.tools.vmi.angular_integration(ReconstructedImage)
+        except AttributeError:
+            print " Image has not been cropped, symmetrised and blurred."
+            print " Call BlurImage and SymmetriseCrop before running."
+            pass
             
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
@@ -159,6 +194,10 @@ def AddArrays(A, B):
     return A
 
 def AverageArrays(Arrays):
+    """
+    Returns the average of a list of arrays by making a 3D array
+    This is a good use of 3D arrays.
+    """
     return np.mean(np.array(Arrays), axis=0)
 
 ###############################################################################################
