@@ -66,7 +66,7 @@ class IonImage:
         self.Contrasted = exposure.rescale_intensity(self.Image, in_range=(p2, p98))
         DisplayImage(self.Contrasted, ColourMap = self.ColourMap)
 
-    def SymmetriseCrop(self, x0=None, y0=None, CropSize=601):
+    def SymmetriseCrop(self, x0=None, y0=None, CropSize=651):
         """
         Function that will symmetrise an image using the four quadrants and
         crop the image after symmetrisation
@@ -98,20 +98,25 @@ class IonImage:
         FourthQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw quarters of the original image
         FirstQuarter = AddArrays(FirstQuarter, self.BlurredImage[:x0, :y0]) 
-        SecondQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
-        ThirdQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
+        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
+        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
         FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3))   # first quadrant
         # Calculate symmetrised quadrant by averaging the four quarters
         SymmedQuadrants = AverageArrays([FirstQuarter,
-                                         SecondQuarter,
+                                         SecondQuarter.T,
                                          ThirdQuarter,
-                                         FourthQuarter])
+                                         FourthQuarter.T])
         FullSymmetrisedImage = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw a fully symmetrised image
         for angle in range(4):
-            FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
-                                             np.rot90(SymmedQuadrants, k=angle))
-        self.SymmetrisedImage = FullSymmetrisedImage
+            if angle % 2 == 0:
+                FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
+                                                 np.rot90(SymmedQuadrants, k=angle).T)
+            else:
+                FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
+                                                 np.rot90(SymmedQuadrants, k=angle))
+        self.SymmetrisedImage = np.rot90(FullSymmetrisedImage, k=1)
+        DisplayImage(self.SymmetrisedImage)
         self.SymmetrisedQuadrant = SymmedQuadrants
         # Crop the image now, took the routine from an older set of scripts so it's quite
         # crappily written
@@ -131,7 +136,7 @@ class IonImage:
                 j = j + 1    # increment the column counter by one
             i = i + 1       # increment the row counter by one
         self.CBS = CroppedImage
-        DisplayImage(CroppedImage, ColourMap=self.ColourMap)
+        #DisplayImage(CroppedImage, ColourMap=self.ColourMap)
 
         
     ###############################################################################################
@@ -159,10 +164,10 @@ class IonImage:
 
         """
         try:
-            self.ReconstructedImage = abel.transform(self.CBS,
+            self.ReconstructedImage = abel.transform(self.SymmetrisedQuadrant,
                                                 direction="inverse",
                                                 method="basex")["transform"]
-            self.PES = abel.tools.vmi.angular_integration(ReconstructedImage)
+            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage)
         except AttributeError:
             print " Image has not been cropped, symmetrised and blurred."
             print " Call BlurImage and SymmetriseCrop before running."
@@ -200,6 +205,47 @@ def AverageArrays(Arrays):
     """
     return np.mean(np.array(Arrays), axis=0)
 
+def SimulateImage(NIons=100000, Dimension=699):
+    """Simulates the pancaking of a 3D ion sphere into two dimensions
+
+    Input:
+    NIons - the number of ions to hit the fan (int)
+    Dimension - the size of the square image (int)
+
+    Returns:
+    A simulated image (ndarray)
+    """
+    MaxR = 300 # set the maximum R from centre
+    MinR = 0
+    costhetamin = -1
+    costhetamax = 1
+    phimin = 0
+    phimax = 2 * np.pi
+
+    x0 = 350 # set the x-centre of the image
+    y0 = 350 # set the y-centre of the image
+
+    OutputImage = np.zeros((Dimension, Dimension), dtype=float)
+
+    for Ion in range(NIons):
+        r = np.random.randint(MinR,MaxR)
+        costheta = costhetamin + np.random.random() * (costhetamax - costhetamin)
+        phi = phimin + np.random.random() * (phimax - phimin)
+        theta = np.arccos(costheta)
+
+        x = r * np.sin(theta) * np.cos(phi)
+        y = r * np.sin(theta) * np.sin(phi)
+        z = r * np.cos(theta)
+
+        CentredX = np.int(x0 + x)
+        CentredY = np.int(y0 + y)
+        if CentredX >= 0 and CentredX < Dimension:
+            if CentredY >= 0 and CentredY < Dimension:
+                OutputImage[CentredX, CentredY] += 1
+                #print CentredX, CentredY
+    return OutputImage
+
+
 ###############################################################################################
 ###############################################################################################
 ###############################################################################################
@@ -207,7 +253,7 @@ def AverageArrays(Arrays):
 ############### Formatting and file I/O routines #################
 # Function for reading a text image from file and converting to numpy array
 def LoadImage(Path):
-    Image = np.genfromtxt(Path, delimiter = DetectDelimiter(Path))
+    Image = np.rot90(np.genfromtxt(Path, delimiter = DetectDelimiter(Path)), k=1)
     #if np.sum(np.isnan(Image)):                             # this checks if there are NaN in image    
     #    Image = np.genfromtxt(Path, delimiter="\s")     # np function generates array from text
     return Image
