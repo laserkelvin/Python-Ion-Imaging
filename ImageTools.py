@@ -73,13 +73,94 @@ class IonImage:
             Bubble = measure.regionprops(self.DetectedEdges)[0]
             self.ImageCentre = Bubble.centroid
             print self.ImageCentre
+    def SymmetriseCrop(self, x0=None, y0=None, CropSize=601):
+        """
+        Function that will symmetrise an image using the four quadrants and
+        crop the image after symmetrisation
+
+        Input:
+        x0 - centre value in x (int)
+        y0 - centre value in y (int)
+        CropSize - Size of image after cropping (int)
+
+
+        """
+        OriginalImageSize = len(self.Image)
+        if x0 and y0 == None:
+            x0 = self.ImageCentre[0]
+            y0 = self.ImageCentre[1]
+        else:
+            pass
+        # Initialise arrays
+        FirstQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        SecondQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        ThirdQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        FourthQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        # Draw quarters of the original image
+        FirstQuarter = AddArrays(FirstQuarter, self.BlurredImage[:x0, :y0]) 
+        SecondQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
+        ThirdQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
+        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3))   # first quadrant
+        # Calculate symmetrised quadrant by averaging the four quarters
+        SymmedQuadrants = AverageArrays([FirstQuarter,
+                                         SecondQuarter,
+                                         ThirdQuarter,
+                                         FourthQuarter])
+        FullSymmetrisedImage = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        # Draw a fully symmetrised image
+        for angle in range(4):
+            FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
+                                             np.rot90(SymmedQuadrants, k=angle))
+        self.SymmetrisedImage = FullSymmetrisedImage
+        self.SymmetrisedQuadrant = SymmedQuadrants
+        # Crop the image now, took the routine from an older set of scripts so it's quite
+        # crappily written
+        UpperLimit = int(np.ceil(CropSize / 2.))               # Get the upper limit of the image
+        LowerLimit = int(np.floor(CropSize / 2.))              # Get the lower limit of the image
+        XUp = x0 + UpperLimit
+        XDown = x0 - LowerLimit
+        YUp = y0 + UpperLimit
+        YDown = y0 - LowerLimit
+        CroppedImage = np.zeros((CropSize, CropSize), dtype=float)
+        # counters for the cropped image array, since it's different from the fullimage
+        i = 0
+        for row in range(YDown,YUp):
+            j = 0      # reset the column counter
+            for col in range(XDown,XUp):
+                CroppedImage[i,j] = FullSymmetrisedImage[row,col]
+                j = j + 1    # increment the column counter by one
+            i = i + 1       # increment the row counter by one
+        self.CBS = CroppedImage
+        DisplayImage(CroppedImage, ColourMap=self.ColourMap)
             
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
     name = " "
     def __init__(self, FileName):
         self.name = FileName
-        
+     
+###############################################################################################
+###############################################################################################
+###############################################################################################
+
+############### Array Manipulation #################
+
+def AddArrays(A, B):
+    """
+    Addition of B onto A elementwise, when B is smaller than A
+
+    Returns A, the larger array with B added it it
+    """
+    ColumnSize = np.shape(B)[0]
+    RowSize = np.shape(B)[1]
+    for i in range(ColumnSize):
+        for j in range(RowSize):
+            A[i,j] = A[i,j] + B[i,j]
+    return A
+
+def AverageArrays(Arrays):
+    return np.mean(np.array(Arrays), axis=0)
+
 ###############################################################################################
 ###############################################################################################
 ###############################################################################################
