@@ -17,6 +17,7 @@ import skimage.measure as measure
 import skimage.draw as draw
 import skimage.exposure as exposure
 from skimage.transform import hough_circle
+import abel
 
 ############### Classes #################
 
@@ -54,9 +55,88 @@ class IonImage:
         DisplayImage(self.BlurredImage, ColourMap = self.ColourMap)
         
     def EqualiseContrast(self):            # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
+        """Enhances the contrast of the image by normalising the intensity histogram
+        using example from scikit-image @ 
+        http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
+
+        Sets attribute Contrasted as the normalised image. Displays the image as well.
+        """
         p2, p98 = np.percentile(self.Image, (2, 98))
         self.Contrasted = exposure.rescale_intensity(self.Image, in_range=(p2, p98))
         DisplayImage(self.Contrasted, ColourMap = self.ColourMap)
+
+    def SymmetriseCrop(self, x0=None, y0=None, CropSize=651):
+        """
+        Function that will symmetrise an image using the four quadrants and
+        crop the image after symmetrisation
+
+        Input:
+        x0 - centre value in x (int)
+        y0 - centre value in y (int)
+        CropSize - Size of image after cropping (int)
+
+        Returns:
+        Sets a few attributes to the Image instance,
+        SymmetrisedImage - The image with four symmetrised quadrants in
+                           the shape of the original input image (ndarray)
+        SymmetrisedQuadrant - A symmetrised quadrant (ndarray)
+        CBS - Stands for "Cropped, Blurred and Symmetrised". Returns
+              the four symmetrised quadrants in the shape of CropSize (ndarray)
+
+        """
+        OriginalImageSize = len(self.Image)
+        if x0 and y0 == None:
+            x0 = self.ImageCentre[0]
+            y0 = self.ImageCentre[1]
+        else:
+            pass
+        # Initialise arrays
+        FirstQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        SecondQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        ThirdQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        FourthQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        # Draw quarters of the original image
+        FirstQuarter = AddArrays(FirstQuarter, self.BlurredImage[:x0, :y0]) 
+        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
+        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
+        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3))   # first quadrant
+        # Calculate symmetrised quadrant by averaging the four quarters
+        SymmedQuadrants = AverageArrays([FirstQuarter,
+                                         SecondQuarter.T,
+                                         ThirdQuarter,
+                                         FourthQuarter.T])
+        FullSymmetrisedImage = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
+        # Draw a fully symmetrised image
+        for angle in range(4):
+            if angle % 2 == 0:
+                FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
+                                                 np.rot90(SymmedQuadrants, k=angle).T)
+            else:
+                FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
+                                                 np.rot90(SymmedQuadrants, k=angle))
+        self.SymmetrisedImage = np.rot90(FullSymmetrisedImage, k=1)
+        DisplayImage(self.SymmetrisedImage)
+        self.SymmetrisedQuadrant = SymmedQuadrants
+        # Crop the image now, took the routine from an older set of scripts so it's quite
+        # crappily written
+        UpperLimit = int(np.ceil(CropSize / 2.))               # Get the upper limit of the image
+        LowerLimit = int(np.floor(CropSize / 2.))              # Get the lower limit of the image
+        XUp = x0 + UpperLimit
+        XDown = x0 - LowerLimit
+        YUp = y0 + UpperLimit
+        YDown = y0 - LowerLimit
+        CroppedImage = np.zeros((CropSize, CropSize), dtype=float)
+        # counters for the cropped image array, since it's different from the fullimage
+        i = 0
+        for row in range(YDown,YUp):
+            j = 0      # reset the column counter
+            for col in range(XDown,XUp):
+                CroppedImage[i,j] = FullSymmetrisedImage[row,col]
+                j = j + 1    # increment the column counter by one
+            i = i + 1       # increment the row counter by one
+        self.CBS = CroppedImage
+        #DisplayImage(CroppedImage, ColourMap=self.ColourMap)
+
         
     ###############################################################################################
     #################### Centre finding and edge detection
@@ -72,17 +152,121 @@ class IonImage:
             Bubble = measure.regionprops(self.DetectedEdges)[0]
             self.ImageCentre = Bubble.centroid
             print self.ImageCentre
+
+    def BASEX(self):
+        """ Calculates the inverse Abel transform of the symmetrised
+        and cropped image by calling routines in the abel module
+
+        Returns:
+        ReconstructedImage - 2D slice of the 3D reconstructed ion image (ndarray)
+        PES - Tuple containing the speed distribution vs. pixel radius
+
+        """
+        try:
+            self.ReconstructedImage = abel.transform(self.SymmetrisedQuadrant,
+                                                direction="inverse",
+                                                method="basex")["transform"]
+            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage)
+        except AttributeError:
+            print " Image has not been cropped, symmetrised and blurred."
+            print " Call BlurImage and SymmetriseCrop before running."
+            pass
             
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
     name = " "
     def __init__(self, FileName):
         self.name = FileName
+<<<<<<< HEAD
+=======
+     
+###############################################################################################
+###############################################################################################
+###############################################################################################
+
+############### Array Manipulation #################
+
+def AddArrays(A, B):
+    """
+    Addition of B onto A elementwise, when B is smaller than A
+
+    Returns A, the larger array with B added it it
+    """
+    ColumnSize = np.shape(B)[0]
+    RowSize = np.shape(B)[1]
+    for i in range(ColumnSize):
+        for j in range(RowSize):
+            A[i,j] = A[i,j] + B[i,j]
+    return A
+
+def AverageArrays(Arrays):
+    """
+    Returns the average of a list of arrays by making a 3D array
+    This is a good use of 3D arrays.
+    """
+    return np.mean(np.array(Arrays), axis=0)
+
+def SimulateImage(NIons=100000, Dimension=699):
+    """Simulates the pancaking of a 3D ion sphere into two dimensions
+
+    Input:
+    NIons - the number of ions to hit the fan (int)
+    Dimension - the size of the square image (int)
+
+    Returns:
+    A simulated image (ndarray)
+    """
+    MaxR = 300 # set the maximum R from centre
+    MinR = 0
+    costhetamin = -1
+    costhetamax = 1
+    phimin = 0
+    phimax = 2 * np.pi
+
+    x0 = 350 # set the x-centre of the image
+    y0 = 350 # set the y-centre of the image
+
+    OutputImage = np.zeros((Dimension, Dimension), dtype=float)
+
+    for Ion in range(NIons):
+        r = np.random.randint(MinR,MaxR)
+        costheta = costhetamin + np.random.random() * (costhetamax - costhetamin)
+        phi = phimin + np.random.random() * (phimax - phimin)
+        theta = np.arccos(costheta)
+
+        x = r * np.sin(theta) * np.cos(phi)
+        y = r * np.sin(theta) * np.sin(phi)
+        z = r * np.cos(theta)
+
+        CentredX = np.int(x0 + x)
+        CentredY = np.int(y0 + y)
+        if CentredX >= 0 and CentredX < Dimension:
+            if CentredY >= 0 and CentredY < Dimension:
+                OutputImage[CentredX, CentredY] += 1
+                #print CentredX, CentredY
+    return OutputImage
+
+def SubtractImages(A, B):
+    """ Subtracts two images A - B, where A and B are instances of the IonImage class
+
+    Input:
+    A - Instance of IonImage
+    B - Instance of IonImage, will be subtracted from A
+
+    Returns:
+    Difference of A - B in ndarray
+    """
+    return A.Image - B.Image
+
+###############################################################################################
+###############################################################################################
+###############################################################################################
+>>>>>>> master
 
 ############### Formatting and file I/O routines #################
 # Function for reading a text image from file and converting to numpy array
 def LoadImage(Path):
-    Image = np.genfromtxt(Path, delimiter = DetectDelimiter(Path))
+    Image = np.rot90(np.genfromtxt(Path, delimiter = DetectDelimiter(Path)), k=1)
     #if np.sum(np.isnan(Image)):                             # this checks if there are NaN in image    
     #    Image = np.genfromtxt(Path, delimiter="\s")     # np function generates array from text
     return Image
@@ -135,4 +319,10 @@ def CallShelfData(Shelf):
 # Save an image (reference as attribute of IonImage) by calling
 # numpy save
 def ExportImage(FileName, Image):
+    """ Saves a ndarray as a text file
+
+    Input:
+    FileName - Path to file (string)
+    Image - np.ndarray containing the image
+    """
     np.savetxt(FileName, Image, delimiter="\t")
