@@ -245,6 +245,17 @@ def SimulateImage(NIons=100000, Dimension=699):
                 #print CentredX, CentredY
     return OutputImage
 
+def SubtractImages(A, B):
+    """ Subtracts two images A - B, where A and B are instances of the IonImage class
+
+    Input:
+    A - Instance of IonImage
+    B - Instance of IonImage, will be subtracted from A
+
+    Returns:
+    Difference of A - B in ndarray
+    """
+    return A.Image - B.Image
 
 ###############################################################################################
 ###############################################################################################
@@ -291,4 +302,10 @@ def MassImportImages(Extension):
     return LoadedImages
 
 def ExportImage(FileName, Image):
+    """ Saves a ndarray as a text file
+
+    Input:
+    FileName - Path to file (string)
+    Image - np.ndarray containing the image
+    """
     np.savetxt(FileName, Image, delimiter="\t")
