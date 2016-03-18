@@ -39,6 +39,8 @@ class IonImage:
         self.Comments = []
     def Show(self):
         DisplayImage(self.Image, ColourMap = self.ColourMap)           # plots the image using matplotlib
+    def SetCalibrationConstant(self, CalConstant):
+        self.CalibrationConstant = CalConstant
     def Report(self):                      # Prints a report of the parameters
         print " Logbook reference:\t" + self.Reference
         print " Background Image?:\t" + str(self.Background)
@@ -163,13 +165,15 @@ class IonImage:
 
         """
         try:
-            self.ReconstructedImage = abel.transform(self.SymmetrisedQuadrant,
+            self.ReconstructedImage = abel.transform(self.BlurredImage,
                                                 direction="inverse",
-                                                method="basex")["transform"]
-            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage)
+                                                method="basex",
+                                                center=self.ImageCentre,)["transform"]
+            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage,
+                                                          dr=self.CalibrationConstant)
         except AttributeError:
-            print " Image has not been cropped, symmetrised and blurred."
-            print " Call BlurImage and SymmetriseCrop before running."
+            print " Image has not been centred, blurred or calconstant-less."
+            print " Call BlurImage and FindCentre before running."
             pass
             
 # Testing class when I was trying out dynamic creation of instances
@@ -177,8 +181,6 @@ class BlankTest:
     name = " "
     def __init__(self, FileName):
         self.name = FileName
-<<<<<<< HEAD
-=======
      
 ###############################################################################################
 ###############################################################################################
@@ -261,7 +263,6 @@ def SubtractImages(A, B):
 ###############################################################################################
 ###############################################################################################
 ###############################################################################################
->>>>>>> master
 
 ############### Formatting and file I/O routines #################
 # Function for reading a text image from file and converting to numpy array
