@@ -48,6 +48,15 @@ class IonImage:
         print " Comments:\t"
         for Comment in self.Comments:
             print Comment
+    def ShowQuadrants(self):
+        try:
+            fig, axarr = plt.subplots(2, 2, sharex=True, sharey=True)
+            axarr[0,0].imshow(self.PreSymmetryQuadrants[0])
+            axarr[0,1].imshow(self.PreSymmetryQuadrants[1])
+            axarr[1,0].imshow(self.PreSymmetryQuadrants[2])
+            axarr[0,1].imshow(self.PreSymmetryQuadrants[3])
+        except AttributeError:
+            print " You haven't symmetrised the image yet!"
             
     ###############################################################################################
     #################### Image manipulation
@@ -99,25 +108,27 @@ class IonImage:
         FourthQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw quarters of the original image
         FirstQuarter = AddArrays(FirstQuarter, self.BlurredImage[:x0, :y0]) 
-        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
-        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
-        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3))   # first quadrant
+        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1)).T   # Rotate quadrant
+        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))     # to phase match
+        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3)).T   # first quadrant
+        # I keep these for later viewing if needed, to see if the symmetrisation is fucked
+        self.PreSymmetryQuadrants = [FirstQuarter, SecondQuarter, ThirdQuarter, FourthQuarter]
         # Calculate symmetrised quadrant by averaging the four quarters
         SymmedQuadrants = AverageArrays([FirstQuarter,
-                                         SecondQuarter.T,
+                                         SecondQuarter,
                                          ThirdQuarter,
-                                         FourthQuarter.T])
+                                         FourthQuarter])
         FullSymmetrisedImage = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw a fully symmetrised image
         for angle in range(4):
-            if angle % 2 == 0:
+            if angle % 2 == 0:         # if it's divisible by two, transpose the matrix
                 FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
                                                  np.rot90(SymmedQuadrants, k=angle).T)
             else:
                 FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
                                                  np.rot90(SymmedQuadrants, k=angle))
         self.SymmetrisedImage = np.rot90(FullSymmetrisedImage, k=1)
-        DisplayImage(self.SymmetrisedImage)
+        #DisplayImage(self.SymmetrisedImage)
         self.SymmetrisedQuadrant = SymmedQuadrants
         # Crop the image now, took the routine from an older set of scripts so it's quite
         # crappily written
@@ -201,6 +212,9 @@ def AddArrays(A, B):
             A[i,j] = A[i,j] + B[i,j]
     return A
 
+def SharpnessIndex(Image):
+    """ Calculate the sharpness index as described by some paper
+    """
 def AverageArrays(Arrays):
     """
     Returns the average of a list of arrays by making a 3D array
@@ -285,10 +299,11 @@ def DetectDelimiter(File):
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
 def DisplayImage(Image, ColourMap="spectral"):
+    fig = plt.figure(figsize=(8,8))
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
     plt.colorbar()                        # add intensity scale
-    plt.show()
+#    plt.show()
 
 # function to extract the filename - usually the logbook reference!
 def ExtractReference(File):
