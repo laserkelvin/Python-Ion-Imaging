@@ -1,5 +1,3 @@
-#!/bin/python
-
 # Routines for general ion image analysis using the IPython Notebooks
 
 # Notable entries:
@@ -10,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import os
+import shelve
 import csv
 from scipy import optimize
 import skimage.filters as filt
@@ -40,6 +39,8 @@ class IonImage:
         self.Comments = []
     def Show(self):
         DisplayImage(self.Image, ColourMap = self.ColourMap)           # plots the image using matplotlib
+    def SetCalibrationConstant(self, CalConstant):
+        self.CalibrationConstant = CalConstant
     def Report(self):                      # Prints a report of the parameters
         print " Logbook reference:\t" + self.Reference
         print " Background Image?:\t" + str(self.Background)
@@ -47,6 +48,15 @@ class IonImage:
         print " Comments:\t"
         for Comment in self.Comments:
             print Comment
+    def ShowQuadrants(self):
+        try:
+            fig, axarr = plt.subplots(2, 2, sharex=True, sharey=True)
+            axarr[0,0].imshow(self.PreSymmetryQuadrants[0])
+            axarr[0,1].imshow(self.PreSymmetryQuadrants[1])
+            axarr[1,0].imshow(self.PreSymmetryQuadrants[2])
+            axarr[0,1].imshow(self.PreSymmetryQuadrants[3])
+        except AttributeError:
+            print " You haven't symmetrised the image yet!"
             
     ###############################################################################################
     #################### Image manipulation
@@ -98,25 +108,27 @@ class IonImage:
         FourthQuarter = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw quarters of the original image
         FirstQuarter = AddArrays(FirstQuarter, self.BlurredImage[:x0, :y0]) 
-        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1))    # Rotate quadrant
-        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))    # to phase match
-        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3))   # first quadrant
+        SecondQuarter = AddArrays(SecondQuarter, np.rot90(self.BlurredImage[:x0, y0:], k=1)).T   # Rotate quadrant
+        ThirdQuarter = AddArrays(ThirdQuarter, np.rot90(self.BlurredImage[x0:, y0:], k=2))     # to phase match
+        FourthQuarter = AddArrays(FourthQuarter, np.rot90(self.BlurredImage[x0:, :y0], k=3)).T   # first quadrant
+        # I keep these for later viewing if needed, to see if the symmetrisation is fucked
+        self.PreSymmetryQuadrants = [FirstQuarter, SecondQuarter, ThirdQuarter, FourthQuarter]
         # Calculate symmetrised quadrant by averaging the four quarters
         SymmedQuadrants = AverageArrays([FirstQuarter,
-                                         SecondQuarter.T,
+                                         SecondQuarter,
                                          ThirdQuarter,
-                                         FourthQuarter.T])
+                                         FourthQuarter])
         FullSymmetrisedImage = np.zeros((OriginalImageSize, OriginalImageSize), dtype=float)
         # Draw a fully symmetrised image
         for angle in range(4):
-            if angle % 2 == 0:
+            if angle % 2 == 0:         # if it's divisible by two, transpose the matrix
                 FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
                                                  np.rot90(SymmedQuadrants, k=angle).T)
             else:
                 FullSymmetrisedImage = AddArrays(FullSymmetrisedImage,
                                                  np.rot90(SymmedQuadrants, k=angle))
         self.SymmetrisedImage = np.rot90(FullSymmetrisedImage, k=1)
-        DisplayImage(self.SymmetrisedImage)
+        #DisplayImage(self.SymmetrisedImage)
         self.SymmetrisedQuadrant = SymmedQuadrants
         # Crop the image now, took the routine from an older set of scripts so it's quite
         # crappily written
@@ -164,13 +176,15 @@ class IonImage:
 
         """
         try:
-            self.ReconstructedImage = abel.transform(self.SymmetrisedQuadrant,
+            self.ReconstructedImage = abel.transform(self.BlurredImage,
                                                 direction="inverse",
-                                                method="basex")["transform"]
-            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage)
+                                                method="basex",
+                                                center=self.ImageCentre,)["transform"]
+            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage,
+                                                          dr=self.CalibrationConstant)
         except AttributeError:
-            print " Image has not been cropped, symmetrised and blurred."
-            print " Call BlurImage and SymmetriseCrop before running."
+            print " Image has not been centred, blurred or calconstant-less."
+            print " Call BlurImage and FindCentre before running."
             pass
             
 # Testing class when I was trying out dynamic creation of instances
@@ -198,6 +212,9 @@ def AddArrays(A, B):
             A[i,j] = A[i,j] + B[i,j]
     return A
 
+def SharpnessIndex(Image):
+    """ Calculate the sharpness index as described by some paper
+    """
 def AverageArrays(Arrays):
     """
     Returns the average of a list of arrays by making a 3D array
@@ -282,10 +299,11 @@ def DetectDelimiter(File):
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
 def DisplayImage(Image, ColourMap="spectral"):
+    fig = plt.figure(figsize=(8,8))
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
     plt.colorbar()                        # add intensity scale
-    plt.show()
+#    plt.show()
 
 # function to extract the filename - usually the logbook reference!
 def ExtractReference(File):
@@ -301,6 +319,21 @@ def MassImportImages(Extension):
         LoadedImages[FileName] = IonImage(FileName, LoadImage(File))     # dynamically generate instances
     return LoadedImages
 
+# Function for exporting mass imported data as a dictionary that
+# can be read in and written out. Keep in mind for inter-notebook
+# "syncing"
+def ShelveData(Shelf, Dictionary):
+    ShelfReference = shelve.open(Shelf)
+    ShelfReference.update(Dictionary)
+    ShelfReference.close()
+
+# Opens the disk data for I/O. Remember to close() it!
+def CallShelfData(Shelf):
+    ShelfReference = shelve.open(Shelf)
+    return ShelfReference
+
+# Save an image (reference as attribute of IonImage) by calling
+# numpy save
 def ExportImage(FileName, Image):
     """ Saves a ndarray as a text file
 
