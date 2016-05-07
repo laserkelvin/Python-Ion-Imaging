@@ -10,7 +10,7 @@ import glob
 import os
 import shelve
 import csv
-from scipy import optimize
+import pandas as pd
 import skimage.filters as filt
 import skimage.feature as feat
 import skimage.measure as measure
@@ -62,9 +62,18 @@ class IonImage:
     #################### Image manipulation
     def BlurImage(self, BlurSize):         # Convolution of image with Gaussian kernel BlurSize
         self.BlurSize = BlurSize
-        self.BlurredImage = filt.gaussian_filter(self.Image, BlurSize)
+        self.BlurredImage = filt.gaussian(self.Image, BlurSize)
         DisplayImage(self.BlurredImage, ColourMap = self.ColourMap)
         
+    def SubtractBackground(self, BackgroundFile):
+        """ Function to subtract the a background image
+            specified as the filepath from the current
+            image instance
+        """
+        BackgroundInstance = IonImage(Reference="Temp",
+                                      Image=LoadImage(BackgroundFile))
+        self.SubtractedImage = SubtractImages(self, BackgroundInstance)
+
     def EqualiseContrast(self):            # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
         """Enhances the contrast of the image by normalising the intensity histogram
         using example from scikit-image @ 
@@ -155,7 +164,7 @@ class IonImage:
     #################### Centre finding and edge detection
     def EdgeDetection(self, Sigma):
         self.DetectionThreshold = Sigma
-        self.DetectedEdges = feat.canny(self.Image, Sigma)               # Use Canny edge detection
+        self.DetectedEdges = np.array(feat.canny(self.Image, Sigma), dtype=int)     # Use Canny edge detection
         DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
     def FindCentre(self):
         if (self.DetectionThreshold == 0.):
@@ -176,12 +185,15 @@ class IonImage:
 
         """
         try:
-            self.ReconstructedImage = abel.transform(self.BlurredImage,
+            self.ReconstructedImage = abel.Transform(self.BlurredImage,
                                                 direction="inverse",
                                                 method="basex",
-                                                center=self.ImageCentre,)["transform"]
-            self.PES = abel.tools.vmi.angular_integration(self.ReconstructedImage,
+                                                center=self.ImageCentre).transform
+            r, speed = abel.tools.vmi.angular_integration(self.ReconstructedImage,
                                                           dr=self.CalibrationConstant)
+            self.PES = pd.DataFrame(data=speed,
+                                    columns=["P(s)"],
+                                    index=r)
         except AttributeError:
             print " Image has not been centred, blurred or calconstant-less."
             print " Call BlurImage and FindCentre before running."
@@ -341,4 +353,4 @@ def ExportImage(FileName, Image):
     FileName - Path to file (string)
     Image - np.ndarray containing the image
     """
-    np.savetxt(FileName, Image, delimiter="\t")
+    np.savetxt(FileName, Image, delimiter="\t", fmt="%.4f")
