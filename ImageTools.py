@@ -28,7 +28,7 @@ class IonImage:
     PumpWavelength = 0.
     ProbeWavelength = 0.
     DetectionThreshold = 0.                # For edge detection
-    ColourMap = "spectral"                 # if not specified, we're staying with spectral
+    ColourMap = "paired"                 # if not specified, we're staying with spectral
     Comments = []
     def __init__(self, Reference, Image):
         self.Reference = Reference         # Holds the logbook reference
@@ -198,7 +198,68 @@ class IonImage:
             print " Image has not been centred, blurred or calconstant-less."
             print " Call BlurImage and FindCentre before running."
             pass
-            
+
+class CorrelatedREMPI:
+    def __init__(self, Reference, Image):
+        self.Reference = Reference
+        self.Image = Image
+        self.ColourMap = "Paired"
+
+    def Show(self):
+        DisplayImage(self.Image, ColourMap=self.ColourMap)
+
+    def CropImage(self, XRange, YRange):
+        self.CroppedImage = self.Image[YRange[0]:YRange[1],
+                                       XRange[0]:XRange[1]]
+
+    def IntegrateREMPI(self, Range):
+        """ Integrate Y across a range of X, and return
+            the average value.
+            Array is a np 2D array, and range is given
+            as a 2-tuple.
+        
+            Example of this is to extract the REMPI
+            spectrum out of a 2D REMPI.
+        """
+        X = xrange(Range[0], Range[1])
+        SummedArray = np.sum(self.Image[:, Range[0]:Range[1]], axis=0)
+        Average = np.sum(SummedArray) / np.shape(SummedArray)
+        return X, SummedArray
+
+    def IntegrateSpeed(self, Range):
+        """ Integrate X across a range of Y, and return
+            the average distribution.
+            Array is a np 2D array, and range is given
+            as a 2-tuple.
+        
+            Example of this is to extract an
+            averaged speed distribution out of a 2D REMPI.
+
+            Definitely not the most pythonic way of
+            coding this up.
+        """
+        counter = 0
+        X = xrange(0, len(self.Image[:,0]))
+        Y = np.zeros((len(self.Image[:,0])), dtype=float)
+        for index in xrange(Range[0], Range[1]):
+            counter = counter + 1
+            Y = Y + ExtractSlice(Array, index)
+            Y = Y / counter
+        return X, Y
+
+    def SubtractBackground(self, Range):
+        """ Specify a range to generate
+            an average background spectrum
+            which will then be subtracted
+            from the full 2D REMPI.
+        """
+        self.BackgroundSlice = IntegrateSpeed(Range)
+        self.Background2D = np.array((self.BackgroundSlice,
+                                      np.shape(self.Image)[1]),
+                                     dtype=float)
+        self.SubtractedImage = np.subtract(self.Image, self.Background2D)
+        Show(self.SubtractedImage)
+
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
     name = " "
@@ -223,6 +284,33 @@ def AddArrays(A, B):
         for j in range(RowSize):
             A[i,j] = A[i,j] + B[i,j]
     return A
+
+def Array2XYZ(Array):
+    """ Function to convert a 2D array into
+        a set of 1D X,Y,Z column vectors
+        for plotting
+
+        Don't think this is efficient or
+        pythonic...
+
+        First initialise the three vectors,
+        then use the numpy iterator to iterate 
+        over the array. The indices of each vector
+        is tracked by a separate counter, which is 
+        not the smartest way of doing this
+    """
+    FlatSize = np.shape(Array)[0] * np.shape(Array)[1]
+    X = np.zeros((FlatSize))
+    Y = np.zeros((FlatSize))
+    Z = np.zeros((FlatSize))
+    index_counter = 0
+    Iterator = np.nditer(Array, flags=["multi_index"])
+    while not Iterator.finished:
+        Y[index_counter] = Iterator.multi_index[0]
+        X[index_counter] = Iterator.multi_index[1]
+        Z[index_counter] = Iterator[0]
+        Iterator.iternext()
+    return X,Y,Z
 
 def SharpnessIndex(Image):
     """ Calculate the sharpness index as described by some paper
@@ -274,6 +362,10 @@ def SimulateImage(NIons=100000, Dimension=699):
                 #print CentredX, CentredY
     return OutputImage
 
+def ExtractSlice(Array, X):
+    """ Extracts a slice of an array """
+    return Array[:, X]
+
 def SubtractImages(A, B):
     """ Subtracts two images A - B, where A and B are instances of the IonImage class
 
@@ -297,6 +389,13 @@ def LoadImage(Path):
     #if np.sum(np.isnan(Image)):                             # this checks if there are NaN in image    
     #    Image = np.genfromtxt(Path, delimiter="\s")     # np function generates array from text
     return Image
+
+def Load2D(Path):
+    """ Loads a 2D REMPI/PHOFEX image from file,
+        returning the transpose of the resulting array
+        since LabView works that way.
+    """
+    return np.loadtxt(Path).T
 
 # This function will "intelligently" detect what delimiter is used 
 # in a file, and return the delimiter. This is fed into another
