@@ -6,6 +6,8 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
 import glob
 import os
 import shelve
@@ -14,9 +16,11 @@ import pandas as pd
 import skimage.filters as filt
 import skimage.feature as feat
 import skimage.measure as measure
-import skimage.draw as draw
+from skimage.morphology import reconstruction
 import skimage.exposure as exposure
-from skimage.transform import hough_circle
+from ipywidgets import *
+from IPython.display import display  
+from IPython.html import widgets
 import abel
 
 ############### Classes #################
@@ -199,6 +203,119 @@ class IonImage:
             print " Call BlurImage and FindCentre before running."
             pass
             
+
+class Multidimensional:
+    """ A class written specifically for analysing
+        multidimensional data (e.g. 2D REMPI)
+
+        Image is a 2D numpy array, which here
+        we'll specify as the
+    """
+    def __init__(self, ImagePath):
+        self.OriginalData = LoadImage(ImagePath)
+        self.ManipulatedData = self.OriginalData
+        self.ColourMap = cm.inferno
+        self.BlurSize = 0.
+        self.Test = 0.
+        self.Figure = None
+        self.DefaultAxes()
+        self.DefaultPlotSettings()
+
+    def BlurImage(self, FilterSize=1.):
+        self.ManipulatedData = filt.gaussian(self.ManipulatedData, FilterSize)
+        self.BlurSize = FilterSize
+
+    def DefaultAxes(self):
+        self.XData = np.arange(0, self.ManipulatedData.shape[1], 1)
+        self.YData = np.arange(0, self.ManipulatedData.shape[0], 1)
+        self.XMesh, self.YMesh = np.meshgrid(self.XData, self.YData, sparse=True)
+        self.Calibrated = False
+
+    def DefaultPlotSettings(self):
+        self.PlotSettings = {"rstride": 5,        # Density to plot wavelength in
+                             "cstride": 20,            # Density to plot speed in
+                             "alpha": 1.,
+                             "antialiased": True,
+                             "cmap": self.ColourMap,
+                             "linewidth": 1}
+
+    def CalibrateAxes(self, Wavelength, CalibrationConstant):
+        self.Calibrated = True
+        self.XData = np.linspace(Wavelength[0], Wavelength[1], self.ManipulatedData.shape[1])
+        self.YData = np.arange(0, self.ManipulatedData.shape[0], 1)
+        self.YData = self.YData * CalibrationConstant
+        self.XMesh, self.YMesh = np.meshgrid(self.XData, self.YData, sparse=True)
+
+    def ResetImage(self):
+        self.ManipulatedData = self.OriginalData
+        self.DefaultAxes()
+        self.DefaultPlotSettings
+
+    def CropImage(self, WavelengthCrop, SpeedCrop):
+        self.ManipulatedData = self.OriginalData[SpeedCrop[0]:SpeedCrop[1],
+                                                 WavelengthCrop[0]:WavelengthCrop[1],]
+        if self.BlurSize > 0.:     # if it's been blurred before, re-blur it
+            self.BlurImage(FilterSize=self.BlurSize)
+        self.DefaultAxes()
+
+    def Plot1D(self):
+        if self.Figure == None:
+            self.Figure = plt.figure(figsize=(12, 10))
+        plt.imshow(self.ManipulatedData, cmap=self.ColourMap)
+        plt.colorbar()
+        plt.draw()
+
+    def Plot2D(self):
+        if self.Figure == None:
+            self.Figure = plt.figure(figsize=(12, 10))
+        self.Axis = self.Figure.gca(projection="3d")
+        if self.Calibrated == True:
+            plt.xlabel("Two-photon energy / cm$^{-1}$")
+            plt.ylabel("Speed / ms$^{-1}$")
+        self.SurfPlot = self.Axis.plot_surface(self.XMesh,
+                                               self.YMesh,
+                                               self.ManipulatedData,
+                                               **(self.PlotSettings)
+                                               )
+
+    def InteractiveCropFunction(self, WavelengthCrop, SpeedCrop):
+        """ Called by InteractiveCrop to do the actual grunt work.
+            Basically just calls CropImage then plots the image
+            using imshow.
+        """
+        Wavelength = [WavelengthCrop, -1]
+        Speed = [SpeedCrop, -1]
+        self.CropImage(Wavelength, Speed)
+        self.Figure = plt.figure(figsize=(12,10))
+        plt.imshow(self.ManipulatedData, cmap=self.ColourMap)
+        plt.colorbar()
+        plt.show()
+
+    def InteractiveCrop(self):
+        """ Uses IPython widgets to crop a 2D. Makes things a
+            bit easier when you can visualise it!
+        """
+        interact(self.InteractiveCropFunction,
+                 WavelengthCrop=(0, self.ManipulatedData.shape[1], 1),
+                 SpeedCrop=(0, self.ManipulatedData.shape[0], 1))
+
+    def FilterMaxima(self, Minimum=None):
+        if Minimum == None:
+            Minimum = self.ManipulatedData.min()
+        Seed = self.ManipulatedData - Minimum
+        Mask = self.ManipulatedData
+        self.Dilated = reconstruction(Seed, Mask, method="dilation")
+        self.ManipulatedData = self.ManipulatedData - self.Dilated
+
+    def IntegrateSpeed(self, IndexRange):
+        """ Integrate the 2D spectrum in speed space;
+            i.e. collect the REMPI spectrum over a specified
+            wavelength range
+        """
+        self.IntegratedSpeed = np.zeros()
+        for RowIndex in xrange(*IndexRange):
+            
+
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
     name = " "
@@ -310,7 +427,7 @@ def DetectDelimiter(File):
     return line.delimiter
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
-def DisplayImage(Image, ColourMap="spectral"):
+def DisplayImage(Image, ColourMap=cm.viridis):
     fig = plt.figure(figsize=(8,8))
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
