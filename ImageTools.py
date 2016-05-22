@@ -306,6 +306,12 @@ class Multidimensional:
         Mask = self.ManipulatedData
         self.Dilated = reconstruction(Seed, Mask, method="dilation")
         self.ManipulatedData = self.ManipulatedData - self.Dilated
+
+    def ExtractSpeed(self, WavelengthRange):
+        SpeedSlice = np.zeros((WavelengthRange[1] - WavelengthRange[0]))
+        for Index, WavelengthIndex in enumerate(WavelengthRange):
+            SpeedSlice[index] = np.sum(self.ManipulatedData[WavelengthIndex,:])
+        return SpeedSlice
             
 class CorrelatedREMPI:
     def __init__(self, Reference, Image):
