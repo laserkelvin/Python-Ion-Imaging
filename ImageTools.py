@@ -53,7 +53,7 @@ class IonImage:
 
     def InvertLUT(self):
         """ Routine to mimic the action of InvertLUT in ImageJ.
-        
+
             Need to figure out some way of inverting the colourmap
             programatically. Every colour map of matplotlib has a
             reversed version with _r appended to the end of it, but
