@@ -12,46 +12,87 @@ import glob
 import os
 import shelve
 import csv
+import os
 import pandas as pd
 import skimage.filters as filt
 import skimage.feature as feat
 import skimage.measure as measure
+from skimage.io import imsave as skimsave
 from skimage.morphology import reconstruction
 import skimage.exposure as exposure
 from ipywidgets import *
 from IPython.display import display  
-from IPython.html import widgets
+#from IPython.html import widgets
+import NotebookTools as NT
 import abel
 
 ############### Classes #################
 
 class IonImage:
-    Background = False                     # whether or not it's a background image
-    ImageCentre = [ 0., 0.]                # List for image centre
-    Reference = " "                        # String holding reference
-    PumpWavelength = 0.
-    ProbeWavelength = 0.
-    DetectionThreshold = 0.                # For edge detection
-    ColourMap = "paired"                 # if not specified, we're staying with spectral
-    Comments = []
-    def __init__(self, Reference, Image):
+    instances = dict()
+    def __init__(self, Reference, Image, CalConstant=1.):
         self.Reference = Reference         # Holds the logbook reference
         self.Image = Image                 # np.ndarray holding the ion intensities
-    def AddComment(self, Comment):
-        self.Comments.append(Comment)      # For scribbling notes
-    def ClearComments(self):               # Clears all the comments in instance
-        self.Comments = []
+        self.ManipulatedImage = Image      # Blurred, subtracted, symmetrised image
+        self.Inverted = False
+        self.BackgroundImages = dict()
+        self.Metadata = {"Reference": self.Reference,
+                         "Pump wavelength": 1.,
+                         "Probe wavelength": 1.,
+                         "Calibration constant": CalConstant,
+                         "Image centre": [0., 0.,],        # row, column?
+                         "Comments": "N/A"}
+        self.ColourMap = cm.viridis
+        IonImage.instances[Reference] = self
+
     def Show(self):
-        DisplayImage(self.Image, ColourMap = self.ColourMap)           # plots the image using matplotlib
-    def SetCalibrationConstant(self, CalConstant):
-        self.CalibrationConstant = CalConstant
-    def Report(self):                      # Prints a report of the parameters
-        print " Logbook reference:\t" + self.Reference
-        print " Background Image?:\t" + str(self.Background)
-        print " Image centres:\t" + str(self.ImageCentre)
-        print " Comments:\t"
-        for Comment in self.Comments:
-            print Comment
+        try:                      # show the manipulated image
+            DisplayImage(self.ManipulatedImage, ColourMap = self.ColourMap)
+        except AttributeError:    # Fall back if it doesn't exist
+            DisplayImage(self.Image, ColourMap = self.ColourMap)
+
+    def InvertLUT(self):
+        """ Routine to mimic the action of InvertLUT in ImageJ.
+        
+            Need to figure out some way of inverting the colourmap
+            programatically. Every colour map of matplotlib has a
+            reversed version with _r appended to the end of it, but
+            I have little idea how I would do this programmatically.
+
+            For now, it's a quick little hack that will invert the 
+            intensity values of the array.
+        """
+        self.Inverted = not self.Inverted                              # Toggle boolean
+        self.ManipulatedImage = np.abs(self.ManipulatedImage - self.ManipulatedImage.max())
+
+    def ExportImage(self):
+        SaveImage(self.Reference, self.ManipulatedImage, ColourMap=self.ColourMap)
+        """ If you invert the intensity, the numpy array when loaded into pBASEX will 
+            have nonsensical values. This section will make sure that it is not inverted
+            before exporting the array.
+        """
+        if self.Inverted == True:
+            self.InvertLUT()
+            np.savetxt("./ImageExport/" + self.Reference + "_E.dat", self.ManipulatedImage, fmt="%.2f")
+            self.InvertLUT()
+        elif self.Inverted == False:
+            np.savetxt("./ImageExport/" + self.Reference + "_E.dat", self.ManipulatedImage, fmt="%.2f")
+
+    def LoadBackground(self, File):
+        try:
+            # when there are other images present
+            Index = max(self.BackgroundImages.keys())
+        except ValueError:
+            # If there aren't any keys, then there aren't any images
+            Index = 0
+        self.BackgroundImages[Index] = LoadImage(File)
+        self.BackgroundSubtraction()
+
+    def BackgroundSubtraction(self):
+        self.ManipulatedImage = self.BlurredImage
+        for Index in self.BackgroundImages.keys():
+            self.ManipulatedImage = self.ManipulatedImage - BackgroundImages[Index]
+
     def ShowQuadrants(self):
         try:
             fig, axarr = plt.subplots(2, 2, sharex=True, sharey=True)
@@ -67,12 +108,15 @@ class IonImage:
     def BlurImage(self, BlurSize):         # Convolution of image with Gaussian kernel BlurSize
         self.BlurSize = BlurSize
         self.BlurredImage = filt.gaussian(self.Image, BlurSize)
-        DisplayImage(self.BlurredImage, ColourMap = self.ColourMap)
+        self.ManipulatedImage = self.BlurredImage
+        DisplayImage(self.BlurredImage, ColourMap=self.ColourMap)
         
     def SubtractBackground(self, BackgroundFile):
         """ Function to subtract the a background image
             specified as the filepath from the current
             image instance
+
+            OBSOLETE - Use new method LoadBackground
         """
         BackgroundInstance = IonImage(Reference="Temp",
                                       Image=LoadImage(BackgroundFile))
@@ -85,9 +129,54 @@ class IonImage:
 
         Sets attribute Contrasted as the normalised image. Displays the image as well.
         """
-        p2, p98 = np.percentile(self.Image, (2, 98))
-        self.Contrasted = exposure.rescale_intensity(self.Image, in_range=(p2, p98))
-        DisplayImage(self.Contrasted, ColourMap = self.ColourMap)
+        p2, p98 = np.percentile(self.ManipulatedImage, (2, 98))
+        self.ManipulatedImage = exposure.rescale_intensity(self.ManipulatedImage, in_range=(p2, p98))
+        DisplayImage(self.ManipulatedImage, ColourMap = self.ColourMap)
+
+    def AnalyseImage(self):
+        """ One step method for centre finding, cropping then reconstruction """
+        self.BlurImage(BlurSize = raw_input("Blur size? Default: 1."))
+        BlurSizes = np.linspace(5., 15., 5)
+        Centres = []
+        for BlurSize in BlurSizes:
+            try:
+                self.EdgeDetection(BlurSize, Verbose=False)
+                Centres.append(self.FindCentre)
+            except ValueError:
+                pass
+        self.Metadata["Image centre"] = np.average(Centres, axis=0)
+        self.PyAbelCrop()
+        self.PyAbelReconstruction()
+        Names = [self.Reference + "_2D",
+                 self.Reference + "_3D",
+                ]
+        for Name, Image in zip([self.ManipulatedImage, self.ReconstructedImage], Names):
+            SaveImage(Name, Image)
+
+    def PyAbelCrop(self):
+        try:
+            self.ImageCentre
+        except AttributeError:
+            print " No image centre present. Specify it first!"
+        self.ManipulatedImage = abel.tools.center.center_image(IM=self.ManipulatedImage,
+                                                               center=self.Metadata["Image centre"],
+                                                               crop="valid_region")
+
+    def PyAbelReconstruction(self):
+        """ Be careful because BASEX is very freaking noisy close to the
+            centre of the image. Until polar methods are developed for
+            PyAbel, it might be better to use pBASEX.
+        """
+        self.ReconstructedImage = abel.transform.Transform(IM=self.ManipulatedImage,
+                                                           method="basex",
+                                                           center=self.Metadata["Image centre"],
+                                                           symmetrize_method="average",
+                                                           angular_integration=True)
+        X = self.ReconstructedImage.angular_integration[0] * self.Metadata["Calibration constant"]
+        Y = self.ReconstructedImage.angular_integration[1]
+        self.SpeedDistribution = pd.DataFrame(data=Y,
+                                              index=X,
+                                              columns=["Y Range"])
 
     def SymmetriseCrop(self, x0=None, y0=None, CropSize=651):
         """
@@ -166,18 +255,22 @@ class IonImage:
         
     ###############################################################################################
     #################### Centre finding and edge detection
-    def EdgeDetection(self, Sigma):
-        self.DetectionThreshold = Sigma
+    def EdgeDetection(self, Sigma, Verbose=True):
         self.DetectedEdges = np.array(feat.canny(self.Image, Sigma), dtype=int)     # Use Canny edge detection
-        DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
-    def FindCentre(self):
-        if (self.DetectionThreshold == 0.):
-            print " You have to call EdgeDetection first!"
-            pass
+        if Verbose == True:
+            DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
         else:
+            pass
+
+    def FindCentre(self):
+        try:
             Bubble = measure.regionprops(self.DetectedEdges)[0]
             self.ImageCentre = Bubble.centroid
-            print self.ImageCentre
+            self.Metadata["Image centre"] = self.ImageCentre
+        except AttributeError:
+            print " Call EdgeDetection first!"
+            exit()
+        return self.ImageCentre
 
     def BASEX(self):
         """ Calculates the inverse Abel transform of the symmetrised
@@ -214,8 +307,8 @@ class Multidimensional:
     def __init__(self, ImagePath):
         self.OriginalData = LoadImage(ImagePath)
         self.ManipulatedData = self.OriginalData
-        self.ColourMap = cm.inferno
-        self.BlurSize = 0.
+        self.ColourMap = cm.Spectral              # spectral is a diverging colourmap,
+        self.BlurSize = 0.                        # allegedly good for differentiating data
         self.Test = 0.
         self.Figure = None
         self.DefaultAxes()
@@ -246,12 +339,31 @@ class Multidimensional:
         self.YData = self.YData * CalibrationConstant
         self.XMesh, self.YMesh = np.meshgrid(self.XData, self.YData, sparse=True)
 
+    def SaveImage(self, FileName, Method="matplotlib"):
+        try:
+            os.mkdir("ImageExport")
+        except OSError:
+            pass
+        if Method == "skimage":              # will be in monochrome
+            skimsave("./ImageExport/" + FileName + ".jpeg",
+                     self.ManipulatedData / np.max(self.ManipulatedData),
+                     plugin="pil")
+        elif Method == "matplotlib":         # has colour map as well
+            plt.imsave("./ImageExport/" + FileName + ".jpeg",
+                       self.ManipulatedData, 
+                       cmap=self.ColourMap)
+
     def ResetImage(self):
+        """ Reverts the manipulated data back to the original laoded file,
+            as well as resets the plot settings.
+        """
         self.ManipulatedData = self.OriginalData
         self.DefaultAxes()
         self.DefaultPlotSettings
 
-    def CropImage(self, WavelengthCrop, SpeedCrop):
+    def CropImage(self, WavelengthCrop, SpeedCrop, Index=True):
+        """ Method for chopping up a 2D array
+        """
         self.ManipulatedData = self.OriginalData[SpeedCrop[0]:SpeedCrop[1],
                                                  WavelengthCrop[0]:WavelengthCrop[1],]
         if self.BlurSize > 0.:     # if it's been blurred before, re-blur it
@@ -259,6 +371,9 @@ class Multidimensional:
         self.DefaultAxes()
 
     def Plot1D(self):
+        """ Plot the 2D REMPI as an image with colourmap,
+            rather as a 3D surface.
+        """
         if self.Figure == None:
             self.Figure = plt.figure(figsize=(12, 10))
         plt.imshow(self.ManipulatedData, cmap=self.ColourMap)
@@ -306,6 +421,12 @@ class Multidimensional:
         Mask = self.ManipulatedData
         self.Dilated = reconstruction(Seed, Mask, method="dilation")
         self.ManipulatedData = self.ManipulatedData - self.Dilated
+
+    def ExtractSpeed(self, WavelengthRange):
+        SpeedSlice = np.zeros((WavelengthRange[1] - WavelengthRange[0]))
+        for Index, WavelengthIndex in enumerate(WavelengthRange):
+            SpeedSlice[index] = np.sum(self.ManipulatedData[WavelengthIndex,:])
+        return SpeedSlice
             
 class CorrelatedREMPI:
     def __init__(self, Reference, Image):
@@ -313,60 +434,31 @@ class CorrelatedREMPI:
         self.Image = Image
         self.ColourMap = "Paired"
 
-    def Show(self):
-        DisplayImage(self.Image, ColourMap=self.ColourMap)
+    def ExtractREMPI(self, WavelengthRange):
+        NData = WavelengthRange[1] - WavelengthRange[0]
+        ExtractedREMPI = np.zeros((NData))
+        for NewIndex, ImageIndex in enumerate(range(*WavelengthRange)):
+            ExtractedREMPI[NewIndex] = np.sum(self.ManipulatedData[:,ImageIndex], axis=0)
+        try:
+            DF = pd.DataFrame(index=self.XData[:NData],
+                              data=ExtractedREMPI,
+                              columns=["REMPI"])
+            return DF
+        except AttributeError:
+            print " No calibrated data available."
+            return ExtractedREMPI
 
-    def CropImage(self, XRange, YRange):
-        self.CroppedImage = self.Image[YRange[0]:YRange[1],
-                                       XRange[0]:XRange[1]]
-
-    def IntegrateREMPI(self, Range):
-        """ Integrate Y across a range of X, and return
-            the average value.
-            Array is a np 2D array, and range is given
-            as a 2-tuple.
-        
-            Example of this is to extract the REMPI
-            spectrum out of a 2D REMPI.
-        """
-        X = xrange(Range[0], Range[1])
-        SummedArray = np.sum(self.Image[:, Range[0]:Range[1]], axis=0)
-        Average = np.sum(SummedArray) / np.shape(SummedArray)
-        return X, SummedArray
-
-    def IntegrateSpeed(self, Range):
-        """ Integrate X across a range of Y, and return
-            the average distribution.
-            Array is a np 2D array, and range is given
-            as a 2-tuple.
-        
-            Example of this is to extract an
-            averaged speed distribution out of a 2D REMPI.
-
-            Definitely not the most pythonic way of
-            coding this up.
-        """
-        counter = 0
-        X = xrange(0, len(self.Image[:,0]))
-        Y = np.zeros((len(self.Image[:,0])), dtype=float)
-        for index in xrange(Range[0], Range[1]):
-            counter = counter + 1
-            Y = Y + ExtractSlice(Array, index)
-            Y = Y / counter
-        return X, Y
-
-    def SubtractBackground(self, Range):
-        """ Specify a range to generate
-            an average background spectrum
-            which will then be subtracted
-            from the full 2D REMPI.
-        """
-        self.BackgroundSlice = IntegrateSpeed(Range)
-        self.Background2D = np.array((self.BackgroundSlice,
-                                      np.shape(self.Image)[1]),
-                                     dtype=float)
-        self.SubtractedImage = np.subtract(self.Image, self.Background2D)
-        Show(self.SubtractedImage)
+    def ExtractSpeed(self, WavelengthRange):
+        AverageArray = np.array(self.ManipulatedData[:,WavelengthRange[0]:WavelengthRange[1]])
+        AverageArray = np.sum(AverageArray, axis=1) / (WavelengthRange[1] - WavelengthRange[0])
+        try:
+            DF = pd.DataFrame(index=self.YData,
+                              data=AverageArray[::-1],
+                              columns=["Speed"])
+            return DF
+        except AttributeError:
+            print " No calibrated data available."
+            return AverageArray
 
 # Testing class when I was trying out dynamic creation of instances
 class BlankTest:
@@ -493,7 +585,7 @@ def SubtractImages(A, B):
 ############### Formatting and file I/O routines #################
 # Function for reading a text image from file and converting to numpy array
 def LoadImage(Path):
-    Image = np.rot90(np.genfromtxt(Path, delimiter = DetectDelimiter(Path)), k=1)
+    Image = np.rot90(np.genfromtxt(Path, delimiter=DetectDelimiter(Path)), k=1)
     #if np.sum(np.isnan(Image)):                             # this checks if there are NaN in image    
     #    Image = np.genfromtxt(Path, delimiter="\s")     # np function generates array from text
     return Image
@@ -504,6 +596,11 @@ def Load2D(Path):
         since LabView works that way.
     """
     return np.loadtxt(Path).T
+
+def DatabaseImage(Database, Reference):
+    Data = NT.LoadReference(Database, Reference)
+    Filename = raw_input(" Please specify which key to load")
+    return np.rot90(Data[Filename])
 
 # This function will "intelligently" detect what delimiter is used 
 # in a file, and return the delimiter. This is fed into another
@@ -519,6 +616,8 @@ def DetectDelimiter(File):
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
 def DisplayImage(Image, ColourMap=cm.viridis):
     fig = plt.figure(figsize=(8,8))
+    ax = fig.gca()
+    ax.grid(b=None)
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
     plt.colorbar()                        # add intensity scale
@@ -527,29 +626,20 @@ def DisplayImage(Image, ColourMap=cm.viridis):
 # function to extract the filename - usually the logbook reference!
 def ExtractReference(File):
     return os.path.splitext(os.path.basename(File))[0]
-   
-# function that will import all the files (as images) in a folder
-# by specifying an extension. I recommend .img for all image files
-def MassImportImages(Extension):
-    LoadedImages = {}
-    FileList = glob.glob(Extension)            # see what files in folder
-    for File in FileList:                      # loop over all the files
-        FileName = ExtractReference(File)      # rip out the filename
-        LoadedImages[FileName] = IonImage(FileName, LoadImage(File))     # dynamically generate instances
-    return LoadedImages
 
-# Function for exporting mass imported data as a dictionary that
-# can be read in and written out. Keep in mind for inter-notebook
-# "syncing"
-def ShelveData(Shelf, Dictionary):
-    ShelfReference = shelve.open(Shelf)
-    ShelfReference.update(Dictionary)
-    ShelfReference.close()
-
-# Opens the disk data for I/O. Remember to close() it!
-def CallShelfData(Shelf):
-    ShelfReference = shelve.open(Shelf)
-    return ShelfReference
+def SaveImage(FileName, Image, Method="matplotlib", ColourMap=cm.viridis):
+    try:
+        os.mkdir("ImageExport")
+    except OSError:
+        pass
+    if Method == "skimage":              # will be in monochrome
+        skimsave("./ImageExport/" + FileName + ".jpeg",
+                 Image / np.max(Image),
+                 plugin="pil")
+    elif Method == "matplotlib":         # has colour map as well
+        plt.imsave("./ImageExport/" + FileName + ".jpeg",
+                    Image, 
+                    cmap=ColourMap)
 
 # Save an image (reference as attribute of IonImage) by calling
 # numpy save
