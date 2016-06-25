@@ -47,9 +47,13 @@ class IonImage:
 
     def Show(self):
         try:                      # show the manipulated image
-            DisplayImage(self.ManipulatedImage, ColourMap = self.ColourMap)
+            DisplayImage(self.ManipulatedImage,
+                         ColourMap = self.ColourMap,
+                         Title=self.Reference + "-Manipulated")
         except AttributeError:    # Fall back if it doesn't exist
-            DisplayImage(self.Image, ColourMap = self.ColourMap)
+            DisplayImage(self.Image, 
+                         ColourMap = self.ColourMap,
+                         Title=self.Reference + "-Raw")
 
     def InvertLUT(self):
         """ Routine to mimic the action of InvertLUT in ImageJ.
@@ -78,20 +82,24 @@ class IonImage:
         elif self.Inverted == False:
             np.savetxt("./ImageExport/" + self.Reference + "_E.dat", self.ManipulatedImage, fmt="%.2f")
 
-    def LoadBackground(self, File):
+    def LoadBackground(self, Image):
         try:
             # when there are other images present
             Index = max(self.BackgroundImages.keys())
         except ValueError:
             # If there aren't any keys, then there aren't any images
             Index = 0
-        self.BackgroundImages[Index] = LoadImage(File)
+        self.BackgroundImages[Index] = Image
         self.BackgroundSubtraction()
 
     def BackgroundSubtraction(self):
         self.ManipulatedImage = self.BlurredImage
         for Index in self.BackgroundImages.keys():
-            self.ManipulatedImage = self.ManipulatedImage - BackgroundImages[Index]
+            self.ManipulatedImage = self.ManipulatedImage - filt.gaussian(self.BackgroundImages[Index], self.BlurSize)
+        # Mask array, don't let ions oversubtract
+        Mask = self.ManipulatedImage < 0.               # find values that are negative
+        self.ManipulatedImage[Mask] = 0.
+        self.Show()
 
     def ShowQuadrants(self):
         try:
@@ -109,7 +117,7 @@ class IonImage:
         self.BlurSize = BlurSize
         self.BlurredImage = filt.gaussian(self.Image, BlurSize)
         self.ManipulatedImage = self.BlurredImage
-        DisplayImage(self.BlurredImage, ColourMap=self.ColourMap)
+        self.Show()
         
     def SubtractBackground(self, BackgroundFile):
         """ Function to subtract the a background image
@@ -158,6 +166,7 @@ class IonImage:
             self.ImageCentre
         except AttributeError:
             print " No image centre present. Specify it first!"
+            exit()
         self.ManipulatedImage = abel.tools.center.center_image(IM=self.ManipulatedImage,
                                                                center=self.Metadata["Image centre"],
                                                                crop="valid_region")
@@ -599,7 +608,10 @@ def Load2D(Path):
 
 def DatabaseImage(Database, Reference):
     Data = NT.LoadReference(Database, Reference)
-    Filename = raw_input(" Please specify which key to load")
+    if len(Data.keys()) != 1:       # Only ask if there's more than one file
+        Filename = raw_input(" Please specify which key to load")
+    else:
+        Filename = Data.keys()[0]
     return np.rot90(Data[Filename])
 
 # This function will "intelligently" detect what delimiter is used 
@@ -614,10 +626,11 @@ def DetectDelimiter(File):
     return line.delimiter
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
-def DisplayImage(Image, ColourMap=cm.viridis):
+def DisplayImage(Image, ColourMap=cm.viridis, Title=" "):
     fig = plt.figure(figsize=(8,8))
     ax = fig.gca()
     ax.grid(b=None)
+    plt.title(Title)
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
     plt.colorbar()                        # add intensity scale
