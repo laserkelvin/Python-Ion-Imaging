@@ -29,7 +29,7 @@ import abel
 ############### Classes #################
 
 class IonImage:
-    instances = dict()
+    __instances__ = dict()
     def __init__(self, Reference, Image, CalConstant=1.):
         self.Reference = Reference         # Holds the logbook reference
         self.Image = Image                 # np.ndarray holding the ion intensities
@@ -41,15 +41,16 @@ class IonImage:
                          "Probe wavelength": 1.,
                          "Calibration constant": CalConstant,
                          "Image centre": [0., 0.,],        # row, column?
-                         "Comments": "N/A"}
+                         "Comments": " "}
         self.ColourMap = cm.viridis
-        IonImage.instances[Reference] = self
+        self.TitleTag = self.Reference
+        IonImage.__instances__[Reference] = self
 
     def Show(self):
         try:                      # show the manipulated image
             DisplayImage(self.ManipulatedImage,
                          ColourMap = self.ColourMap,
-                         Title=self.Reference + "-Manipulated")
+                         Title=self.TitleTag)
         except AttributeError:    # Fall back if it doesn't exist
             DisplayImage(self.Image, 
                          ColourMap = self.ColourMap,
@@ -117,6 +118,8 @@ class IonImage:
         self.BlurSize = BlurSize
         self.BlurredImage = filt.gaussian(self.Image, BlurSize)
         self.ManipulatedImage = self.BlurredImage
+        if "-Blurred" not in self.TitleTag:
+            self.TitleTag = self.TitleTag + "-Blurred"
         self.Show()
         
     def SubtractBackground(self, BackgroundFile):
@@ -129,6 +132,8 @@ class IonImage:
         BackgroundInstance = IonImage(Reference="Temp",
                                       Image=LoadImage(BackgroundFile))
         self.SubtractedImage = SubtractImages(self, BackgroundInstance)
+        if "-Subtracted" not in self.TitleTag:
+            self.TitleTag = self.TitleTag + "-Subtracted"
 
     def EqualiseContrast(self):            # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
         """Enhances the contrast of the image by normalising the intensity histogram
@@ -143,7 +148,7 @@ class IonImage:
 
     def AnalyseImage(self):
         """ One step method for centre finding, cropping then reconstruction """
-        self.BlurImage(BlurSize = raw_input("Blur size? Default: 1."))
+        self.BlurImage(BlurSize=float(raw_input("Blur size? Default: 1.")))
         BlurSizes = np.linspace(5., 15., 5)
         Centres = []
         for BlurSize in BlurSizes:
@@ -170,6 +175,7 @@ class IonImage:
         self.ManipulatedImage = abel.tools.center.center_image(IM=self.ManipulatedImage,
                                                                center=self.Metadata["Image centre"],
                                                                crop="valid_region")
+        print self.ManipulatedImage.shape
 
     def PyAbelReconstruction(self):
         """ Be careful because BASEX is very freaking noisy close to the
@@ -265,7 +271,7 @@ class IonImage:
     ###############################################################################################
     #################### Centre finding and edge detection
     def EdgeDetection(self, Sigma, Verbose=True):
-        self.DetectedEdges = np.array(feat.canny(self.Image, Sigma), dtype=int)     # Use Canny edge detection
+        self.DetectedEdges = np.array(feat.canny(self.ManipulatedImage, Sigma), dtype=int)     # Use Canny edge detection
         if Verbose == True:
             DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
         else:
@@ -607,9 +613,14 @@ def Load2D(Path):
     return np.loadtxt(Path).T
 
 def DatabaseImage(Database, Reference):
-    Data = NT.LoadReference(Database, Reference)
+    Data = NT.LoadReference(Database, Reference, Verbose=False)
+    Options = dict()                # Now we don't have to type out the whole name...
     if len(Data.keys()) != 1:       # Only ask if there's more than one file
-        Filename = raw_input(" Please specify which key to load")
+        for Index, Key in enumerate(Data.keys()):
+            Options[Index] = Key
+        print Options
+        Selector = int(raw_input(" Please specify which key to load"))
+        Filename = Options[Selector]
     else:
         Filename = Data.keys()[0]
     return np.rot90(Data[Filename])
