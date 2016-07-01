@@ -29,38 +29,78 @@ import abel
 ############### Classes #################
 
 class IonImage:
-    instances = dict()
+    __instances__ = dict()
     def __init__(self, Reference, Image, CalConstant=1.):
         self.Reference = Reference         # Holds the logbook reference
         self.Image = Image                 # np.ndarray holding the ion intensities
         self.ManipulatedImage = Image      # Blurred, subtracted, symmetrised image
+        self.Inverted = False
         self.BackgroundImages = dict()
         self.Metadata = {"Reference": self.Reference,
                          "Pump wavelength": 1.,
                          "Probe wavelength": 1.,
                          "Calibration constant": CalConstant,
                          "Image centre": [0., 0.,],        # row, column?
-                         "Comments": "N/A"}
-        self.ColourMap = cm.inferno
-        IonImage.instances[Reference] = self
+                         "Comments": " "}
+        self.ColourMap = cm.viridis
+        self.TitleTag = self.Reference
+        IonImage.__instances__[Reference] = self
 
     def Show(self):
-        DisplayImage(self.Image, ColourMap = self.ColourMap)           # plots the image using matplotlib
+        try:                      # show the manipulated image
+            DisplayImage(self.ManipulatedImage,
+                         ColourMap = self.ColourMap,
+                         Title=self.TitleTag)
+        except AttributeError:    # Fall back if it doesn't exist
+            DisplayImage(self.Image, 
+                         ColourMap = self.ColourMap,
+                         Title=self.Reference + "-Raw")
 
-    def LoadBackground(self, File):
+    def InvertLUT(self):
+        """ Routine to mimic the action of InvertLUT in ImageJ.
+
+            Need to figure out some way of inverting the colourmap
+            programatically. Every colour map of matplotlib has a
+            reversed version with _r appended to the end of it, but
+            I have little idea how I would do this programmatically.
+
+            For now, it's a quick little hack that will invert the 
+            intensity values of the array.
+        """
+        self.Inverted = not self.Inverted                              # Toggle boolean
+        self.ManipulatedImage = np.abs(self.ManipulatedImage - self.ManipulatedImage.max())
+
+    def ExportImage(self):
+        SaveImage(self.Reference, self.ManipulatedImage, ColourMap=self.ColourMap)
+        """ If you invert the intensity, the numpy array when loaded into pBASEX will 
+            have nonsensical values. This section will make sure that it is not inverted
+            before exporting the array.
+        """
+        if self.Inverted == True:
+            self.InvertLUT()
+            np.savetxt("./ImageExport/" + self.Reference + "_E.dat", self.ManipulatedImage, fmt="%.2f")
+            self.InvertLUT()
+        elif self.Inverted == False:
+            np.savetxt("./ImageExport/" + self.Reference + "_E.dat", self.ManipulatedImage, fmt="%.2f")
+
+    def LoadBackground(self, Image):
         try:
             # when there are other images present
             Index = max(self.BackgroundImages.keys())
         except ValueError:
             # If there aren't any keys, then there aren't any images
             Index = 0
-        self.BackgroundImages[Index] = LoadImage(File)
+        self.BackgroundImages[Index] = Image
         self.BackgroundSubtraction()
 
     def BackgroundSubtraction(self):
         self.ManipulatedImage = self.BlurredImage
         for Index in self.BackgroundImages.keys():
-            self.ManipulatedImage = self.ManipulatedImage - BackgroundImages[Index]
+            self.ManipulatedImage = self.ManipulatedImage - filt.gaussian(self.BackgroundImages[Index], self.BlurSize)
+        # Mask array, don't let ions oversubtract
+        Mask = self.ManipulatedImage < 0.               # find values that are negative
+        self.ManipulatedImage[Mask] = 0.
+        self.Show()
 
     def ShowQuadrants(self):
         try:
@@ -78,7 +118,9 @@ class IonImage:
         self.BlurSize = BlurSize
         self.BlurredImage = filt.gaussian(self.Image, BlurSize)
         self.ManipulatedImage = self.BlurredImage
-        DisplayImage(self.BlurredImage, ColourMap = self.ColourMap)
+        if "-Blurred" not in self.TitleTag:
+            self.TitleTag = self.TitleTag + "-Blurred"
+        self.Show()
         
     def SubtractBackground(self, BackgroundFile):
         """ Function to subtract the a background image
@@ -90,6 +132,8 @@ class IonImage:
         BackgroundInstance = IonImage(Reference="Temp",
                                       Image=LoadImage(BackgroundFile))
         self.SubtractedImage = SubtractImages(self, BackgroundInstance)
+        if "-Subtracted" not in self.TitleTag:
+            self.TitleTag = self.TitleTag + "-Subtracted"
 
     def EqualiseContrast(self):            # http://scikit-image.org/docs/dev/auto_examples/plot_equalize.html
         """Enhances the contrast of the image by normalising the intensity histogram
@@ -104,7 +148,7 @@ class IonImage:
 
     def AnalyseImage(self):
         """ One step method for centre finding, cropping then reconstruction """
-        self.BlurImage(BlurSize = raw_input("Blur size? Default: 1."))
+        self.BlurImage(BlurSize=float(raw_input("Blur size? Default: 1.")))
         BlurSizes = np.linspace(5., 15., 5)
         Centres = []
         for BlurSize in BlurSizes:
@@ -127,16 +171,27 @@ class IonImage:
             self.ImageCentre
         except AttributeError:
             print " No image centre present. Specify it first!"
-        self.ManipulatedImage = abel.tools.center.center_image(self.ManipulatedImage,
+            exit()
+        self.ManipulatedImage = abel.tools.center.center_image(IM=self.ManipulatedImage,
                                                                center=self.Metadata["Image centre"],
-                                                               crop="maintain_size")
+                                                               crop="valid_region")
+        print self.ManipulatedImage.shape
 
     def PyAbelReconstruction(self):
+        """ Be careful because BASEX is very freaking noisy close to the
+            centre of the image. Until polar methods are developed for
+            PyAbel, it might be better to use pBASEX.
+        """
         self.ReconstructedImage = abel.transform.Transform(IM=self.ManipulatedImage,
                                                            method="basex",
                                                            center=self.Metadata["Image centre"],
                                                            symmetrize_method="average",
                                                            angular_integration=True)
+        X = self.ReconstructedImage.angular_integration[0] * self.Metadata["Calibration constant"]
+        Y = self.ReconstructedImage.angular_integration[1]
+        self.SpeedDistribution = pd.DataFrame(data=Y,
+                                              index=X,
+                                              columns=["Y Range"])
 
     def SymmetriseCrop(self, x0=None, y0=None, CropSize=651):
         """
@@ -216,7 +271,7 @@ class IonImage:
     ###############################################################################################
     #################### Centre finding and edge detection
     def EdgeDetection(self, Sigma, Verbose=True):
-        self.DetectedEdges = np.array(feat.canny(self.Image, Sigma), dtype=int)     # Use Canny edge detection
+        self.DetectedEdges = np.array(feat.canny(self.ManipulatedImage, Sigma), dtype=int)     # Use Canny edge detection
         if Verbose == True:
             DisplayImage(self.DetectedEdges, ColourMap = self.ColourMap)
         else:
@@ -381,7 +436,6 @@ class Multidimensional:
         Mask = self.ManipulatedData
         self.Dilated = reconstruction(Seed, Mask, method="dilation")
         self.ManipulatedData = self.ManipulatedData - self.Dilated
-=======
 
     def ExtractSpeed(self, WavelengthRange):
         SpeedSlice = np.zeros((WavelengthRange[1] - WavelengthRange[0]))
@@ -558,6 +612,19 @@ def Load2D(Path):
     """
     return np.loadtxt(Path).T
 
+def DatabaseImage(Database, Reference):
+    Data = NT.LoadReference(Database, Reference, Verbose=False)
+    Options = dict()                # Now we don't have to type out the whole name...
+    if len(Data.keys()) != 1:       # Only ask if there's more than one file
+        for Index, Key in enumerate(Data.keys()):
+            Options[Index] = Key
+        print Options
+        Selector = int(raw_input(" Please specify which key to load"))
+        Filename = Options[Selector]
+    else:
+        Filename = Data.keys()[0]
+    return np.rot90(Data[Filename])
+
 # This function will "intelligently" detect what delimiter is used 
 # in a file, and return the delimiter. This is fed into another
 # function that does I/O
@@ -570,8 +637,11 @@ def DetectDelimiter(File):
     return line.delimiter
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
-def DisplayImage(Image, ColourMap=cm.viridis):
+def DisplayImage(Image, ColourMap=cm.viridis, Title=" "):
     fig = plt.figure(figsize=(8,8))
+    ax = fig.gca()
+    ax.grid(b=None)
+    plt.title(Title)
     plt.imshow(Image)
     plt.set_cmap(ColourMap)              # set the colourmap
     plt.colorbar()                        # add intensity scale
@@ -581,7 +651,7 @@ def DisplayImage(Image, ColourMap=cm.viridis):
 def ExtractReference(File):
     return os.path.splitext(os.path.basename(File))[0]
 
-def SaveImage(FileName, Image, Method="matplotlib"):
+def SaveImage(FileName, Image, Method="matplotlib", ColourMap=cm.viridis):
     try:
         os.mkdir("ImageExport")
     except OSError:
@@ -593,7 +663,7 @@ def SaveImage(FileName, Image, Method="matplotlib"):
     elif Method == "matplotlib":         # has colour map as well
         plt.imsave("./ImageExport/" + FileName + ".jpeg",
                     Image, 
-                    cmap=self.ColourMap)
+                    cmap=ColourMap)
 
 # Save an image (reference as attribute of IonImage) by calling
 # numpy save
