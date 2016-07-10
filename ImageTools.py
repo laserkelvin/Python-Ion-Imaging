@@ -46,15 +46,17 @@ class IonImage:
         self.TitleTag = self.Reference
         IonImage.__instances__[Reference] = self
 
-    def Show(self):
+    def Show(self, Interface="mpl"):
         try:                      # show the manipulated image
             DisplayImage(self.ManipulatedImage,
                          ColourMap = self.ColourMap,
-                         Title=self.TitleTag)
+                         Title=self.TitleTag,
+                         Interface=Interface)
         except AttributeError:    # Fall back if it doesn't exist
             DisplayImage(self.Image, 
                          ColourMap = self.ColourMap,
-                         Title=self.Reference + "-Raw")
+                         Title=self.Reference + "-Raw",
+                         Interface=Interface)
 
     def InvertLUT(self):
         """ Routine to mimic the action of InvertLUT in ImageJ.
@@ -637,15 +639,20 @@ def DetectDelimiter(File):
     return line.delimiter
 
 # Pretty self explanatory. Uses matplotlib to show the np.ndarray image
-def DisplayImage(Image, ColourMap=cm.viridis, Title=" "):
-    fig = plt.figure(figsize=(8,8))
-    ax = fig.gca()
-    ax.grid(b=None)
-    plt.title(Title)
-    plt.imshow(Image)
-    plt.set_cmap(ColourMap)              # set the colourmap
-    plt.colorbar()                        # add intensity scale
-#    plt.show()
+def DisplayImage(Image, ColourMap=cm.viridis, Title=" ", Interface="mpl"):
+    if Interface == "mpl":
+        fig = plt.figure(figsize=(8,8))
+        ax = fig.gca()
+        ax.grid(b=None)
+        plt.title(Title)
+        plt.imshow(Image)
+        plt.set_cmap(ColourMap)              # set the colourmap
+        plt.colorbar()                        # add intensity scale
+    elif Interface == "plotly":
+        import PlottingTools as PT 
+        DataFrame = pd.DataFrame(data=Image)  # format to dataframe
+        PT.SurfacePlot(DataFrame=DataFrame, Title=Title)
+
 
 # function to extract the filename - usually the logbook reference!
 def ExtractReference(File):
