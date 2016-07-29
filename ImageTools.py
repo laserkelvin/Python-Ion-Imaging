@@ -8,11 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
-import glob
 import os
-import shelve
 import csv
-import os
 import pandas as pd
 import skimage.filters as filt
 import skimage.feature as feat
@@ -24,6 +21,7 @@ from ipywidgets import *
 from IPython.display import display  
 #from IPython.html import widgets
 import NotebookTools as NT
+import PlottingTools as PT
 import abel
 
 ############### Classes #################
